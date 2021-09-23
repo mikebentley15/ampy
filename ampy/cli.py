@@ -241,8 +241,9 @@ def ls(directory, long_format, recursive):
 @cli.command()
 @click.argument("local", type=click.Path(exists=True))
 @click.argument("remote", required=False)
+@click.option("--verbose", "-v", is_flag=True, help="Print verbose updates")
 @click.option("--strip", "-s", is_flag=True, help="Strip docstrings and comments")
-def put(local, remote, strip):
+def put(local, remote, verbose, strip):
     """Put a file or folder and its contents on the board.
 
     Put will upload a local file or folder  to the board.  If the file already
@@ -283,12 +284,24 @@ def put(local, remote, strip):
             contents = infile.read()
 
             # try to strip the python file if requested
+            stripped = False
             if strip and local_filepath.endswith(".py"):
                 try:
+                    old_contents = contents
                     contents = files.strip_docstrings_and_comments(contents)
                 except:
                     # not a hard error, just push the old contents
                     print("Warning: could not strip", filepath)
+                else:
+                    stripped = True
+
+            # print information about the copy and stripping process
+            if verbose:
+                msg = "copy {} -> {}".format(local_filepath, remote_filepath)
+                if stripped:
+                    msg += "  ({} bytes -> {} bytes)".format(
+                            len(old_contents), len(contents))
+                print(msg)
 
             # copy the (potentially stripped) contents to the board
             board_files.put(remote_filepath, contents)
@@ -304,6 +317,7 @@ def put(local, remote, strip):
                 posixpath.join(remote, os.path.relpath(parent, local))
             )
             try:
+                if verbose: print("mkdir", remote_parent)
                 # Create remote parent directory.
                 board_files.mkdir(remote_parent)
             except files.DirectoryExistsError:
