@@ -26,6 +26,7 @@ import platform
 import posixpath
 import re
 import serial.serialutil
+import sys
 
 import click
 import dotenv
@@ -334,7 +335,9 @@ def put(local, remote, verbose, strip):
 
 @cli.command()
 @click.argument("remote_files", metavar="remote_file", nargs=-1)
-def rm(remote_files):
+@click.option("--verbose", "-v", is_flag=True, help="Print verbose updates")
+@click.option("--force", "-f", is_flag=True, help="ignore nonexistent files")
+def rm(remote_files, verbose, force):
     """Remove one or more files from the board.
 
     Remove the specified file(s) from the board's filesystem.  Note that this
@@ -347,7 +350,14 @@ def rm(remote_files):
     """
     board_files = files.Files(_board)
     for filepath in remote_files:
-        board_files.rm(filepath)
+        if verbose: print("rm -f" if force else "rm", filepath)
+        try:
+            board_files.rm(filepath)
+        except RuntimeError:
+            if not force:
+                raise
+            elif verbose:
+                print("Warning:", filepath, "does not exist", file=sys.stderr)
 
 
 @cli.command()
