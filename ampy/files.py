@@ -22,8 +22,9 @@
 import ast
 import textwrap
 import binascii
+import sys
 
-from ampy.pyboard import PyboardError
+from ampy.pyboard import PyboardError, stdout_write_bytes
 
 
 BUFFER_SIZE = 32  # Amount of data to read or write to the serial port at a time.
@@ -91,6 +92,34 @@ class Files(object):
         """
         self._pyboard = pyboard
 
+    def canonicalize_remote_path(self, remote_path):
+        """Returns a canonical version of the remote path"""
+        # Make sure path starts with slash and does not end with one,
+        # for consistency
+        remote_path.rstrip("/")
+        if not remote_path.startswith("/"):
+            remote_path = "/" + remote_path
+        return remote_path
+
+
+    def isdir(self, remote_path):
+        """Returns True if the remote path is a directory, and False otherwise"""
+        remote_path = self.canonicalize_remote_path(remote_path)
+        command = """\
+            import uos
+            def isdir(path):
+                try:
+                    return uos.stat(path)[0] & 0o170000 == 0o040000
+                except OSError:
+                    return False
+            \n"""
+        command = textwrap.dedent(command)
+        command += "print(isdir('{0}'))\n\n".format(remote_path)
+        self._pyboard.enter_raw_repl()
+        out = self._pyboard.exec_(command)
+        self._pyboard.exit_raw_repl()
+        return b"True" in out
+
     def get(self, filename):
         """Retrieve the contents of the specified file and return its contents
         as a byte string.
@@ -141,13 +170,10 @@ class Files(object):
         # # Make sure directory ends in a slash.
         # if not directory.endswith("/"):
         #     directory += "/"
-
-        # Make sure directory starts with slash, for consistency.
-        if not directory.startswith("/"):
-            directory = "/" + directory
+        directory = self.canonicalize_remote_path(directory)
 
         command = """\
-                try:        
+                try:
                     import os
                 except ImportError:
                     import uos as os\n"""
@@ -161,12 +187,13 @@ class Files(object):
                         try:
                             # if its a directory, then it should provide some children.
                             children = os.listdir(dir_or_file)
-                        except OSError:                        
+                        except OSError:
                             # probably a file. run stat() to confirm.
                             os.stat(dir_or_file)
-                            result.add(dir_or_file) 
+                            result.add(dir_or_file)
                         else:
-                            # probably a directory, add to result if empty.
+                            # definitely a directory, add to result if empty
+                            # but with trailing '/'.
                             if children:
                                 # queue the children to be dealt with in next iteration.
                                 for child in children:
@@ -175,17 +202,17 @@ class Files(object):
                                         next = dir_or_file + child
                                     else:
                                         next = dir_or_file + '/' + child
-                                    
+
                                     _listdir(next)
                             else:
-                                result.add(dir_or_file)                     
+                                result.add(dir_or_file + '/')
 
                     _listdir(directory)
                     return sorted(result)\n"""
         else:
             command += """\
                 def listdir(directory):
-                    if directory == '/':                
+                    if directory == '/':
                         return sorted([directory + f for f in os.listdir(directory)])
                     else:
                         return sorted([directory + '/' + f for f in os.listdir(directory)])\n"""
@@ -195,7 +222,7 @@ class Files(object):
             command += """
                 r = []
                 for f in listdir('{0}'):
-                    size = os.stat(f)[6]                    
+                    size = os.stat(f)[6]
                     r.append('{{0}} - {{1}} bytes'.format(f, size))
                 print(r)
             """.format(
@@ -307,6 +334,7 @@ class Files(object):
         # couldn't be deleted in the first pass) and recursively clears those
         # subdirectories.  Finally when finished clearing all the children the
         # parent directory is deleted.
+        # FIXME: it assumes directory is at the top-level
         command = """
             try:
                 import os
@@ -348,17 +376,30 @@ class Files(object):
         If stream_output is True(default) then return None and print outputs to
         stdout without buffering.
         """
+        with open(filename, "rb") as infile:
+            contents = infile.read()
+        return self.exec_(contents,
+                          wait_output=wait_output,
+                          stream_output=stream_output)
+
+    def exec_(self, command, wait_output=True, stream_output=True):
+        """Run the provided command and returns its output.  If wait_output is
+        True (default) then wait for the command to finish and then returns its
+        output, otherwise just run the command and don't wait for any output.
+        If stream_output is True (default) then return None and print outputs
+        to stdout without buffering.
+        """
         self._pyboard.enter_raw_repl()
         out = None
         if stream_output:
-            self._pyboard.execfile(filename, stream_output=True)
+            # Print the output as it comes in
+            self._pyboard.exec_(command, data_consumer=stdout_write_bytes)
         elif wait_output:
             # Run the file and wait for output to return.
-            out = self._pyboard.execfile(filename)
+            out = self._pyboard.exec_(command)
         else:
             # Read the file and run it using lower level pyboard functions that
             # won't wait for it to finish or return output.
-            with open(filename, "rb") as infile:
-                self._pyboard.exec_raw_no_follow(infile.read())
+            self._pyboard.exec_raw_no_follow(command)
         self._pyboard.exit_raw_repl()
         return out
