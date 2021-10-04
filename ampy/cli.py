@@ -107,10 +107,11 @@ def cli(port, baud, delay):
 @click.argument("remote_files", metavar="remote_file", nargs=-1)
 @click.argument(
     "local_path",
-    type=click.Path(writable=True, allow_dash=True, path_type=pathlib.Path),
+    type=click.Path(allow_dash=True, path_type=pathlib.Path),
     required=False
 )
-def get(remote_files, local_path):
+@click.option("--verbose", "-v", is_flag=True, help="Print verbose updates")
+def get(remote_files, local_path, verbose):
     """
     Retrieve a file from the board.
 
@@ -141,6 +142,11 @@ def get(remote_files, local_path):
 
       ampy --port /board/serial/port get main.py helper.py ./
     """
+    # if one argument was specified, interpret it as a remote file
+    if not remote_files and local_path:
+        remote_files = (str(local_path),)
+        local_path = None
+
     # checks
     if len(remote_files) == 0:
         raise click.UsageError("Must specify at least one remote file")
@@ -149,20 +155,59 @@ def get(remote_files, local_path):
                 f"Invalid value for '[LOCAL_PATH]': Directory '{local_path}' does not exist.")
 
     board_files = files.Files(_board)
-    for remote_file in remote_files:
+
+    def get_file(remote_file, destination):
+        "Only called on files and not directories"
         # Get the file contents.
         contents = board_files.get(remote_file)
 
         # Print the file out if no local file was provided, otherwise save it.
-        if local_path is None or str(local_path) == "-":
+        if destination is None or str(destination) == "-":
             print(contents.decode("utf-8"))
-        elif local_path.is_dir():
-            remote_path = pathlib.Path(remote_file)
-            with local_path.joinpath(remote_path.name).open(mode='wb') as local_file:
-                local_file.write(contents)
         else:
-            with local_path.open(mode='wb') as local_file:
+            remote_path = pathlib.Path(remote_file)
+            if destination.is_dir():
+                destination /= remote_path.name
+            if verbose:
+                print(remote_file, "->", str(destination))
+            with destination.open(mode='wb') as local_file:
                 local_file.write(contents)
+
+    for remote_file in remote_files:
+        remote_file = board_files.canonicalize_remote_path(remote_file)
+        if board_files.isdir(remote_file):
+            remote_path = pathlib.Path(remote_file)
+
+            if not local_path or local_path.is_file():
+                raise click.UsageError(
+                    f"Remote directory needs a local directory destination")
+
+            # If local path is an existing directory and remote is not root,
+            # then we will create a local directory with the same name as the
+            # remote
+            current_local_dir = local_path
+            if current_local_dir.is_dir() and not remote_file == "/":
+                current_local_dir /= remote_path.name
+
+            # Use our recursive ls() function to list all files and empty
+            # directories to get
+            tree = board_files.ls(remote_file, long_format=False, recursive=True)
+
+            # Get each one, maintaining the relative remote directory structure
+            for subpath in (pathlib.Path(x) for x in tree):
+                relpath = subpath.relative_to(remote_path)
+                current_local_file = current_local_dir.joinpath(relpath)
+                # make sure the directory exists locally
+                current_local_file.parent.mkdir(parents=True, exist_ok=True)
+                if board_files.isdir(str(subpath)):
+                    current_local_file.mkdir(exist_ok=True)
+                else:
+                    # copy the file contents over
+                    get_file(str(subpath), current_local_file)
+        else:
+            # It's just a normal file, so just get it
+            get_file(remote_file, local_path)
+
 
 
 @cli.command()
@@ -297,7 +342,7 @@ def put(local, remote, verbose, strip):
                     contents = files.strip_docstrings_and_comments(contents)
                 except:
                     # not a hard error, just push the old contents
-                    print("Warning: could not strip", filepath)
+                    print("Warning: could not strip", local_filepath)
                 else:
                     stripped = True
 
