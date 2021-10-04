@@ -57,7 +57,12 @@ def windows_full_port_name(portname):
         return "\\\\.\\{0}".format(portname)
 
 
-@click.group(context_settings={'auto_envvar_prefix': 'AMPY'})
+@click.group(
+    context_settings={
+        'auto_envvar_prefix': 'AMPY',
+        'help_option_names': ['-h', '--help'],
+    },
+)
 @click.option(
     "--port",
     "-p",
