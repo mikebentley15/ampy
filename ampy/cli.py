@@ -433,7 +433,10 @@ def rmdir(remote_folder, missing_okay):
 
 
 @cli.command()
-@click.argument("local_file")
+@click.argument(
+    "local_file",
+    type=click.Path(readable=True, allow_dash=True)
+)
 @click.option(
     "--no-output",
     "-n",
@@ -470,6 +473,42 @@ def run(local_file, no_output):
             "Failed to find or read input file: {0}".format(local_file), err=True
         )
 
+@cli.command("exec")
+@click.argument("command")
+@click.option(
+    "--no-output",
+    "-n",
+    is_flag=True,
+    help="Run the command without waiting for it to finish and print output.  Use this when running code with main loops that never return.",
+)
+def exec_(command, no_output):
+    """Run a command and print its output.
+
+    Run will send the specified command to the board and execute it immediately.
+    Any output from the board will be printed to the console (note that this is
+    not a 'shell' and you can't send input to the program).
+
+    Note that if your code has a main or infinite loop you should add the --no-output
+    option.  This will run the command and immediately exit without waiting for
+    the script to finish and print output.
+
+    For example to run a command to print the system information:
+
+      ampy --port /board/serial/port exec "import os; print(os.uname())"
+
+    Or to run test.py and not wait for it to finish:
+
+      $ ampy exec --no-output "
+      > import time, machine
+      > while True:
+      >   time.sleep(0.8)
+      >   machine.Pin(25, machine.Pin.OUT).toggle()
+      > "
+    """
+    board_files = files.Files(_board)
+    output = board_files.exec_(command, not no_output, not no_output)
+    if output is not None:
+        print(output.decode("utf-8"), end="")
 
 @cli.command()
 @click.option(
