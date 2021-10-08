@@ -20,6 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 from __future__ import print_function
+import hashlib
 import os
 import pathlib
 import platform
@@ -294,7 +295,8 @@ def ls(directory, long_format, recursive):
 @click.argument("remote", required=False)
 @click.option("--verbose", "-v", is_flag=True, help="Print verbose updates")
 @click.option("--strip", "-s", is_flag=True, help="Strip docstrings and comments")
-def put(local, remote, verbose, strip):
+@click.option("--checksum", "-c", is_flag=True, help="Skip files with equal checksum")
+def put(local, remote, verbose, strip, checksum):
     """Put a file or folder and its contents on the board.
 
     Put will upload a local file or folder  to the board.  If the file already
@@ -345,17 +347,31 @@ def put(local, remote, verbose, strip):
                     print("Warning: could not strip", local_filepath)
                 else:
                     stripped = True
+                    contents = contents.encode("utf-8")
+
+            checksum_matches = False
+            if checksum:
+                try:
+                    remotehash = board_files.checksum(remote_filepath)
+                except:
+                    pass
+                else:
+                    localhash = hashlib.sha256(contents).hexdigest()
+                    checksum_matches = (remotehash == localhash.encode("utf-8"))
 
             # print information about the copy and stripping process
             if verbose:
-                msg = "copy {} -> {}".format(local_filepath, remote_filepath)
+                msg = "{} {} -> {}".format(
+                        "skip" if checksum_matches else "copy",
+                        local_filepath, remote_filepath)
                 if stripped:
                     msg += "  ({} bytes -> {} bytes)".format(
                             len(old_contents), len(contents))
                 print(msg)
 
             # copy the (potentially stripped) contents to the board
-            board_files.put(remote_filepath, contents)
+            if not checksum_matches:
+                board_files.put(remote_filepath, contents)
 
     # Check if path is a folder and do recursive copy of everything inside it.
     # Otherwise it's a file and should simply be copied over.

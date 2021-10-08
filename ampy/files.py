@@ -120,6 +120,42 @@ class Files(object):
         self._pyboard.exit_raw_repl()
         return b"True" in out
 
+    def checksum(self, filename):
+        """Calculate and return the sha256 checksum of a specified remote file
+        as a byte string.
+        """
+        # read and digest one KB at a time, so as to not load too much into
+        # memory
+        command = """
+            import sys
+            import ubinascii
+            import hashlib
+            with open('{0}', 'rb') as infile:
+                result = bytearray(4096)
+                checksum = hashlib.sha256()
+                while True:
+                    count = infile.readinto(result)
+                    if count == 0:
+                        break
+                    checksum.update(result[:count])
+                _ = sys.stdout.write(ubinascii.hexlify(checksum.digest()))
+        """.format(filename)
+        self._pyboard.enter_raw_repl()
+        try:
+            out = self._pyboard.exec_(textwrap.dedent(command))
+        except PyboardError as ex:
+            # Check if this is an OSError #2, i.e. file doesn't exist and rethrow
+            try:
+                message = ex.args[2].decode("utf-8")
+                if message.find("OSError") != -1 and message.find("2") != -1:
+                    raise RuntimeError("No such file: {0}".format(filename))
+                else:
+                    raise ex
+            except UnicodeDecodeError:
+                raise
+        self._pyboard.exit_raw_repl()
+        return out
+
     def get(self, filename):
         """Retrieve the contents of the specified file and return its contents
         as a byte string.
@@ -132,11 +168,12 @@ class Files(object):
             import sys
             import ubinascii
             with open('{0}', 'rb') as infile:
+                result = bytearray({1})
                 while True:
-                    result = infile.read({1})
-                    if result == b'':
+                    count = infile.readinto(result)
+                    if count == 0:
                         break
-                    len = sys.stdout.write(ubinascii.hexlify(result))
+                    _ = sys.stdout.write(ubinascii.hexlify(result[:count]))
         """.format(
             filename, BUFFER_SIZE
         )
