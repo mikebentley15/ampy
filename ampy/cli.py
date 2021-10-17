@@ -372,6 +372,10 @@ def put(local, remote, verbose, strip, checksum):
             # copy the (potentially stripped) contents to the board
             if not checksum_matches:
                 board_files.put(remote_filepath, contents)
+                return len(contents)
+            return 0
+
+    bytes_written = 0
 
     # Check if path is a folder and do recursive copy of everything inside it.
     # Otherwise it's a file and should simply be copied over.
@@ -394,9 +398,13 @@ def put(local, remote, verbose, strip, checksum):
             for filename in child_files:
                 filepath = os.path.join(parent, filename)
                 remote_filepath = posixpath.join(remote_parent, filename)
-                copy_file(filepath, remote_filepath)
+                bytes_written += copy_file(filepath, remote_filepath)
     else:
-        copy_file(local, remote)
+        bytes_written += copy_file(local, remote)
+
+    if verbose:
+        print()
+        print("Wrote {} bytes to the micropython board".format(bytes_written))
 
 
 @cli.command()
